@@ -1,6 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 import re
+import pandas as pd
 
 import typing
 
@@ -20,43 +21,39 @@ HEADERS = {
 
 class ProductData:
     
-    def __init__(self) -> None:
+    def __init__(self, url: str, productType: str, response: requests.Response) -> None:
+    
+        self._soup = BeautifulSoup(response.content, "lxml")
         
-        self.url = None
-        self._soup = None
-        
-        self.title = None
-        self.brand = None
-        self.asin = None
-        self.productType = None
-        
-        self.price = None
-        self.unitType, self.unitPrice = None, None
-        
-        self.rating = None
-        self.numRatings = None
-        self.rank = None
-        self.formFactor = None
-        self.firstAvailable = None
+        self._details = {
+            "url": url,
+            "title": None,
+            "brand": None,
+            "asin": None,
+            "productType": productType,
+            "price": None,
+            "unitPrice": None,
+            "rating": None,
+            "numRatings": None,
+            "formFactor": None,
+            "firstAvailable": None
+        }
 
-    def write(self, writer) -> None:
-        csv_items = [self.url, self.title, self.brand, self.asin, self.productType,
-                        self.price, self.unitPrice, self.unitType, self.firstAvailable,
-                        self.rating, self.numRatings, self.rank, self.formFactor]
+    def to_list(self) -> list:
         
-        csv_items = [str(item) for item in csv_items]
+        return self._details.values()
+    
+    @property
+    def columns(self) -> typing.List[str]:
         
-        writer.writerow(csv_items)
-
+        return self._details.keys()
 
 class AmazonProductData(ProductData):
 
     def __init__(self, response: requests.Response, url: str, productType: str) -> None:
-        super().__init__()
-
-        self.productType = productType
-
-        self._soup = BeautifulSoup(response.content, "lxml")
+        super().__init__(url, productType, response)
+        
+        self._details['rank'] = None
 
         self.__processData__()     
 
@@ -240,18 +237,20 @@ class AmazonProductData(ProductData):
         
 
     def __processData__(self) -> None:
-        self.title = self._getTitle_()
-        self.brand = self._getBrand_()
-        self.asin = self._getASIN_()
         
-        self.price = self._getPrice_()
-        self.unitType, self.unitPrice = self._getPricePerUnit_()
+        self._details['title'] = self._getTitle_()
+        self._details["brand"] = self._getBrand_()
+        self._details["asin"] = self._getASIN_()
         
-        self.rating = self._getRating_()
-        self.numRatings = self._getNumRatings_()
-        self.rank = self._getBestSellerRank_()
-        self.formFactor = self._getFormFactor_()
-        self.firstAvailable = self._getFirstAvailable_()
+        self._details["price"] = self._getPrice_()
+        self._details["unitType"], self._details["unitPrice"] = self._getPricePerUnit_()
+        
+        self._details["rating"] = self._getRating_()
+        self._details["numRatings"] = self._getNumRatings_()
+        self._details["rank"] = self._getBestSellerRank_()
+        
+        self._details["formFactor"] = self._getFormFactor_()
+        self._details["firstAvailable"] = self._getFirstAvailable_()
 
 
 class IHerbProductData(ProductData):
@@ -283,7 +282,9 @@ def getLinksFromSearch(soup: BeautifulSoup, base_url: str) -> list[str]:
 
             ret_links.append(f"{base_url}{cleaned_href}")
 
-    return ret_links
+    unique_links = pd.unique(ret_links)
+
+    return unique_links
 
 def loadLinksFromSearch(links: list[str], session: requests.Session, headers: dict) -> typing.Dict[str, requests.Response]:
     
@@ -309,12 +310,13 @@ def loadSessionUrl(session: requests.Session, url: str, headers: dict):
 
 
 # Main function to get data
-def getDataFromSearch(base_url: str, search_term: str, headers=None, page=1, output=True) -> list[AmazonProductData]:
+def getDataFromSearch(base_url: str, search_term: str, headers=None, page=1, output_file=True, raw=False) -> list[AmazonProductData]:
     
     search_url = f"{base_url}/s?k={search_term}&page={page}"
     
-    if headers is None:
-        headers = HEADERS.copy()
+    headers = HEADERS.copy()
+    if isinstance(HEADERS, dict):
+        headers.update(headers)
     
     search_page = requests.get(search_url, headers=headers)
     search_soup = BeautifulSoup(search_page.content, "lxml")
@@ -323,29 +325,25 @@ def getDataFromSearch(base_url: str, search_term: str, headers=None, page=1, out
     
     session = requests.Session()
     
-    url_to_response = loadLinksFromSearch(links, headers)
+    url_to_response = loadLinksFromSearch(links, session, headers)
+           
+    if raw:
+        return url_to_response
             
-            
-    product_data_list = [AmazonProductData(response, url, search_term) for url, response in url_to_response.items()]
+    product_data_list = [AmazonProductData(response, url, search_term) for url, response in tqdm.tqdm(url_to_response.items(), desc="Processing webpages")]
     
-    if output:
-            
-        with open("output.csv", "w") as output_file:
-            
-            writer = csv.writer(output_file, delimiter=";", quotechar="|", quoting=csv.QUOTE_MINIMAL)
-            
-            Columns = ["Url", "Title", "Brand", "ASIN", "Product Type",
-                    "Price", "Unit Price", "Unit Type", "First Available",
-                    "Average Rating", "Number of Ratings", "Rank",
-                    "Form Factor"]
-            
-            writer.writerow(Columns)
-            
-            for product in product_data_list:
-                
-                product.write(writer)
-                
-    return product_data_list
+    
+    
+    product_data = [product.to_list() for product in product_data_list]
+    columns = product_data_list[0].columns
+    
+    product_df = pd.DataFrame(product_data, columns=columns)
+    
+    if output_file:
+        product_df.to_csv("output.csv", index=False, mode="w", encoding="utf-8",
+                          quotechar="|", quoting=csv.QUOTE_MINIMAL, sep=";")
+    
+    return product_df
         
         
             
