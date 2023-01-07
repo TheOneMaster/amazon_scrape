@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -5,8 +7,8 @@ import pandas as pd
 
 import typing
 
-from concurrent.futures import ThreadPoolExecutor
-import time
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+
 import csv
 import tqdm
 
@@ -21,7 +23,7 @@ HEADERS = {
 
 class ProductData:
     
-    def __init__(self, url: str, productType: str, response: requests.Response) -> None:
+    def __init__(self, response: requests.Response, url: str, productType: str) -> None:
     
         self._soup = BeautifulSoup(response.content, "lxml")
         
@@ -36,7 +38,8 @@ class ProductData:
             "rating": None,
             "numRatings": None,
             "formFactor": None,
-            "firstAvailable": None
+            "firstAvailable": None,
+            "uses": None
         }
 
     def to_list(self) -> list:
@@ -51,7 +54,7 @@ class ProductData:
 class AmazonProductData(ProductData):
 
     def __init__(self, response: requests.Response, url: str, productType: str) -> None:
-        super().__init__(url, productType, response)
+        super().__init__(response, url, productType)
         
         self._details['rank'] = None
 
@@ -73,12 +76,12 @@ class AmazonProductData(ProductData):
 
     def _getBrand_(self) -> str:
 
-        try:
-
-            brand_row = self._soup.find("tr", attrs={
-                "class": "a-spacing-small po-brand"
-            })
-            
+        brand_row = self._soup.find("tr", attrs={
+            "class": "a-spacing-small po-brand"
+        })
+        
+        if brand_row:
+        
             brand_span = brand_row.find("span", attrs={
                 "class": "po-break-word"
             })
@@ -86,12 +89,20 @@ class AmazonProductData(ProductData):
             brand_str = brand_span.string
 
             
-            brand_str = brand_str.strip()  
-
-        except AttributeError:
-            brand_str = "Unknown"
-
-        return brand_str
+            brand_str = brand_str.strip()
+            
+            return brand_str
+        
+        details_table = self._soup.find(id="detailBullets_feature_div")
+        
+        try:  
+            manufacturer_row = details_table.find("span", string=re.compile("^Manufacturer"))
+            manufacturer_span = manufacturer_row.find_next_sibling()
+            
+            return manufacturer_span.string.strip()
+        
+        except:
+            return "Unknown"
 
     def _getASIN_(self) -> str:
 
@@ -144,7 +155,7 @@ class AmazonProductData(ProductData):
 
         try:
             price_span = self._soup.find("span", attrs={
-                "class": "a-price a-text-price a-size-medium apexPriceToPay"
+                "class": ["a-price a-text-price a-size-medium apexPriceToPay", "a-price aok-align-center"]
             })
 
             price = price_span.findChild("span").string
@@ -234,7 +245,24 @@ class AmazonProductData(ProductData):
             form_str = "N/A"
             
         return form_str
+    
+    def _getUses_(self) -> str:
         
+        recommended_row = self._soup.find("tr", attrs={
+            "class": "a-spacing-small po-recommended_uses_for_product"
+        })
+        
+        if recommended_row:
+            recommended_uses_span = recommended_row.find("span", attrs={
+                "class": "a-size-base po-break-word"
+            })
+            
+            recommended_uses = recommended_uses_span.string
+            
+            return recommended_uses
+        
+        return "N/A"
+    
 
     def __processData__(self) -> None:
         
@@ -251,12 +279,14 @@ class AmazonProductData(ProductData):
         
         self._details["formFactor"] = self._getFormFactor_()
         self._details["firstAvailable"] = self._getFirstAvailable_()
+        
+        self._details["uses"] = self._getUses_()
 
 
 class IHerbProductData(ProductData):
     
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, response: requests.Response, url: str, productType: str) -> None:
+        super().__init__(response, url, productType)
 
 
 # Helper functions
@@ -286,16 +316,15 @@ def getLinksFromSearch(soup: BeautifulSoup, base_url: str) -> list[str]:
 
     return unique_links
 
-def loadLinksFromSearch(links: list[str], session: requests.Session, headers: dict) -> typing.Dict[str, requests.Response]:
+def loadLinksFromSearch(links: list[str], headers: dict) -> typing.Dict[str, requests.Response]:
     
     url_to_response = {}
     
     with ThreadPoolExecutor() as executor:
         
-        futures_to_url = {executor.submit(loadSessionUrl, session, url, headers): url for url in links}
-        start_time = time.time()
+        futures_to_url = {executor.submit(loadSessionUrl, url, headers): url for url in links}
         
-        for future in tqdm.tqdm(futures_to_url, desc="URL requests"):
+        for future in tqdm.tqdm(futures_to_url, desc="URL requests", unit="links"):
             
             url = futures_to_url[future]
             response = future.result()
@@ -304,47 +333,58 @@ def loadLinksFromSearch(links: list[str], session: requests.Session, headers: di
             
     return url_to_response
 
-def loadSessionUrl(session: requests.Session, url: str, headers: dict):
+def loadSessionUrl(url: str, headers: dict) -> requests.Response:
     
-    return session.get(url, headers=headers)
+    return requests.get(url, headers=headers)
 
+# Try to make this work
+def multiprocessedParse(product_dict: dict, productType: str) -> typing.List[AmazonProductData|IHerbProductData]:
+    
+    with ProcessPoolExecutor() as executor:
+        
+        products = []
+        product_list = [executor.submit(lambda url, response: AmazonProductData(response, url, productType)._details) for url, response in product_dict.items()]
+        
+        for prod in product_list:
+            products.append(prod.result())
+        
+        return products
 
 # Main function to get data
-def getDataFromSearch(base_url: str, search_term: str, headers=None, page=1, output_file=True, raw=False) -> list[AmazonProductData]:
+def getDataFromSearch(base_url: str, search_term: str, headers=None, page=1, output_file=True, as_df=True, raw=True) -> pd.DataFrame|typing.List[AmazonProductData]:
     
     search_url = f"{base_url}/s?k={search_term}&page={page}"
     
-    headers = HEADERS.copy()
-    if isinstance(HEADERS, dict):
-        headers.update(headers)
+    search_headers = HEADERS.copy()
     
-    search_page = requests.get(search_url, headers=headers)
+    if isinstance(headers, dict):
+        search_headers.update(headers)
+    
+    search_page = requests.get(search_url, headers=search_headers)
     search_soup = BeautifulSoup(search_page.content, "lxml")
     
     links = getLinksFromSearch(search_soup, base_url)
     
-    session = requests.Session()
+    url_to_response = loadLinksFromSearch(links, search_headers)
     
-    url_to_response = loadLinksFromSearch(links, session, headers)
-           
     if raw:
         return url_to_response
             
-    product_data_list = [AmazonProductData(response, url, search_term) for url, response in tqdm.tqdm(url_to_response.items(), desc="Processing webpages")]
+    product_data_list = [AmazonProductData(response, url, search_term) for url, response in url_to_response.items()]
     
-    
-    
-    product_data = [product.to_list() for product in product_data_list]
-    columns = product_data_list[0].columns
-    
-    product_df = pd.DataFrame(product_data, columns=columns)
-    
-    if output_file:
-        product_df.to_csv("output.csv", index=False, mode="w", encoding="utf-8",
-                          quotechar="|", quoting=csv.QUOTE_MINIMAL, sep=";")
-    
-    return product_df
+    if as_df:
+        product_data = [product.to_list() for product in product_data_list]
+        columns = product_data_list[0].columns
         
+        product_df = pd.DataFrame(product_data, columns=columns)
+        
+        if output_file:
+            product_df.to_csv("output.csv", index=False, mode="w", encoding="utf-8",
+                            quotechar="|", quoting=csv.QUOTE_MINIMAL, sep=";")
+        
+        return product_df
+        
+    return product_data_list
         
             
             
