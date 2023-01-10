@@ -2,7 +2,7 @@ import argparse
 import gspread
 from gspread.utils import ValueInputOption
 
-from .scrape import getDataFromSearch
+from scrape import getDataFromSearch
 
 def check_positive_values(value: int) -> int:
     
