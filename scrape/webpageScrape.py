@@ -1,25 +1,12 @@
-from __future__ import annotations
+import typing
+
 
 import requests
 from bs4 import BeautifulSoup
 import re
-import pandas as pd
 
-import typing
+from .string_manip import getOtherIngredients
 
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-
-import csv
-import tqdm
-
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.71 Safari/537.36',
-    'Accept-Encoding': 'gzip, deflate',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'DNT': '1',
-    'Connection': 'close',
-    'Upgrade-Insecure-Requests': '1'
-    }
 
 class ProductData:
     
@@ -28,18 +15,21 @@ class ProductData:
         self._soup = BeautifulSoup(response.content, "lxml")
         
         self._details = {
+            "source": None,
             "url": url,
             "title": None,
             "brand": None,
             "asin": None,
             "productType": productType,
             "price": None,
+            "unitType": None,
             "unitPrice": None,
             "rating": None,
             "numRatings": None,
             "formFactor": None,
             "firstAvailable": None,
-            "uses": None
+            "uses": None,
+            "ingredients": None
         }
 
     def to_list(self) -> list:
@@ -51,14 +41,65 @@ class ProductData:
         
         return self._details.keys()
 
+
+    def _getTitle_(self) -> None:
+        raise NotImplementedError
+    
+    def _getBrand_(self) -> None:
+        raise NotImplementedError
+
+    def _getASIN_(self) -> None:
+        raise NotImplementedError
+    
+    def _getPrice_(self) -> None:
+        raise NotImplementedError
+
+    def _getPricePerUnit_(self) -> None:
+        raise NotImplementedError
+
+    def _getRating_(self) -> None:
+        raise NotImplementedError
+
+    def _getNumRatings_(self) -> None:
+        raise NotImplementedError
+
+    def _getFormFactor_(self) -> None:
+        raise NotImplementedError
+
+    def _getFirstAvailable_(self) -> None:
+        raise NotImplementedError
+
+    def _getUses_(self) -> None:
+        raise NotImplementedError
+
+    def _getIngredients_(self) -> None:
+        raise NotImplementedError
+
+    def __process__(self) -> None:
+
+        self._details["title"] = self._getTitle_()
+        self._details["brand"] = self._getBrand_()
+        self._details["asin"] = self._getASIN_()
+        self._details["price"] = self._getPrice_()
+         
+        self._details["rating"] = self._getRating_()
+        self._details["numRatings"] = self._getNumRatings_()
+        self._details["formFactor"] = self._getFormFactor_()
+        self._details["firstAvailable"] = self._getFirstAvailable_()
+        self._details["uses"] = self._getUses_()
+        self._details["ingredients"] = self._getIngredients_()
+
+
 class AmazonProductData(ProductData):
 
     def __init__(self, response: requests.Response, url: str, productType: str) -> None:
         super().__init__(response, url, productType)
         
         self._details['rank'] = None
+        self._details['source'] = "Amazon"
 
-        self.__processData__()     
+
+        self.__process__()     
 
   
     def _getTitle_(self) -> str:
@@ -154,6 +195,7 @@ class AmazonProductData(ProductData):
     def _getPrice_(self) -> str:
 
         try:
+
             price_span = self._soup.find("span", attrs={
                 "class": ["a-price a-text-price a-size-medium apexPriceToPay", "a-price aok-align-center"]
             })
@@ -247,40 +289,54 @@ class AmazonProductData(ProductData):
         return form_str
     
     def _getUses_(self) -> str:
+
+        try:
         
-        recommended_row = self._soup.find("tr", attrs={
-            "class": "a-spacing-small po-recommended_uses_for_product"
-        })
-        
-        if recommended_row:
-            recommended_uses_span = recommended_row.find("span", attrs={
-                "class": "a-size-base po-break-word"
+            recommended_row = self._soup.find("tr", attrs={
+                "class": "a-spacing-small po-recommended_uses_for_product"
             })
             
-            recommended_uses = recommended_uses_span.string
+            if recommended_row:
+                recommended_uses_span = recommended_row.find("span", attrs={
+                    "class": "a-size-base po-break-word"
+                })
+                
+                recommended_uses = recommended_uses_span.string
             
             return recommended_uses
         
-        return "N/A"
+        except:
+            return "N/A"
     
+    def _getIngredients_(self) -> str:
 
-    def __processData__(self) -> None:
+        try:
+            information_div = self._soup.find(id="importantInformation_feature_div")
+            ingredients_div = information_div.find("h4", string=re.compile("^Ingredients")).parent
+            ingredients_str = ingredients_div.find_all("p")[-1].string.strip()
+
+            ingredients = getOtherIngredients(ingredients_str, self._details['productType'])
+            ingredients = ", ".join(ingredients)
+
+            return ingredients
+
+        except:
+            return None
+
+        # try:
+        #     product_overview_div = self._soup.find(id="productOverview_feature_div")
+        #     benefits = 
+
+        # except
+
+
+    def __process__(self) -> None:
         
-        self._details['title'] = self._getTitle_()
-        self._details["brand"] = self._getBrand_()
-        self._details["asin"] = self._getASIN_()
-        
-        self._details["price"] = self._getPrice_()
+        super().__process__()
+
         self._details["unitType"], self._details["unitPrice"] = self._getPricePerUnit_()
-        
-        self._details["rating"] = self._getRating_()
-        self._details["numRatings"] = self._getNumRatings_()
         self._details["rank"] = self._getBestSellerRank_()
         
-        self._details["formFactor"] = self._getFormFactor_()
-        self._details["firstAvailable"] = self._getFirstAvailable_()
-        
-        self._details["uses"] = self._getUses_()
 
 
 class IHerbProductData(ProductData):
@@ -289,102 +345,7 @@ class IHerbProductData(ProductData):
         super().__init__(response, url, productType)
 
 
-# Helper functions
-def getLinksFromSearch(soup: BeautifulSoup, base_url: str) -> list[str]:
-    
-    links = soup.find_all("a", attrs={
-        "class": "a-link-normal s-no-outline"
-    })
 
-    ret_links = []
-
-    for link in links:
-
-        href = link.get("href")
-
-        is_amazon_page = href[0:5] != "https"
-        sponsored_product = "gp/slredirect" in href
-
-        if is_amazon_page and not sponsored_product:
-
-            # Remove references from URL
-            cleaned_href = href.rsplit("/ref=", 1)[0]
-
-            ret_links.append(f"{base_url}{cleaned_href}")
-
-    unique_links = pd.unique(ret_links)
-
-    return unique_links
-
-def loadLinksFromSearch(links: list[str], headers: dict) -> typing.Dict[str, requests.Response]:
-    
-    url_to_response = {}
-    
-    with ThreadPoolExecutor() as executor:
-        
-        futures_to_url = {executor.submit(loadSessionUrl, url, headers): url for url in links}
-        
-        for future in tqdm.tqdm(futures_to_url, desc="URL requests", unit="links"):
-            
-            url = futures_to_url[future]
-            response = future.result()
-            
-            url_to_response[url] = response
-            
-    return url_to_response
-
-def loadSessionUrl(url: str, headers: dict) -> requests.Response:
-    
-    return requests.get(url, headers=headers)
-
-# Try to make this work
-def multiprocessedParse(product_dict: dict, productType: str) -> typing.List[AmazonProductData|IHerbProductData]:
-    
-    with ProcessPoolExecutor() as executor:
-        
-        products = []
-        product_list = [executor.submit(lambda url, response: AmazonProductData(response, url, productType)._details) for url, response in product_dict.items()]
-        
-        for prod in product_list:
-            products.append(prod.result())
-        
-        return products
-
-# Main function to get data
-def getDataFromSearch(base_url: str, search_term: str, headers=None, page=1, output_file=True, as_df=True, raw=True) -> pd.DataFrame|typing.List[AmazonProductData]:
-    
-    search_url = f"{base_url}/s?k={search_term}&page={page}"
-    
-    search_headers = HEADERS.copy()
-    
-    if isinstance(headers, dict):
-        search_headers.update(headers)
-    
-    search_page = requests.get(search_url, headers=search_headers)
-    search_soup = BeautifulSoup(search_page.content, "lxml")
-    
-    links = getLinksFromSearch(search_soup, base_url)
-    
-    url_to_response = loadLinksFromSearch(links, search_headers)
-    
-    if raw:
-        return url_to_response
-            
-    product_data_list = [AmazonProductData(response, url, search_term) for url, response in url_to_response.items()]
-    
-    if as_df:
-        product_data = [product.to_list() for product in product_data_list]
-        columns = product_data_list[0].columns
-        
-        product_df = pd.DataFrame(product_data, columns=columns)
-        
-        if output_file:
-            product_df.to_csv("output.csv", index=False, mode="w", encoding="utf-8",
-                            quotechar="|", quoting=csv.QUOTE_MINIMAL, sep=";")
-        
-        return product_df
-        
-    return product_data_list
         
             
             
