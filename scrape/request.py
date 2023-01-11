@@ -154,10 +154,10 @@ def dfPriceManipulation(df: pd.DataFrame) -> pd.DataFrame:
 
     df_modified = df.drop(columns=['unitPrice', 'unitType'])
 
-    count_type_index = df[df['unitType'] == 'Count']
+    count_type_index = df['unitType'] == 'Count'
 
     df_modified['pricePerCount'] = df[count_type_index]['unitPrice']
-    df_modified["pricePerOz"] = df[count_type_index.isnull()]['unitPrice']
+    df_modified["pricePerOz"] = df[~count_type_index]['unitPrice']
 
     return df_modified
 

@@ -1,3 +1,5 @@
+from typing import Literal
+
 import argparse
 import gspread
 from gspread.utils import ValueInputOption
@@ -44,7 +46,7 @@ def createParser() -> argparse.ArgumentParser:
     
     return parser
 
-def main(website: str, search_term: str, sheet: gspread.Worksheet, startRow: int, maxProducts=None) -> None:
+def main(website: Literal['Amazon', 'IHerb'], search_term: str, sheet: gspread.Worksheet, startRow: int, maxProducts=None) -> None:
 
     column_map = {
         "source": "A",
@@ -106,5 +108,5 @@ if __name__ == "__main__":
     spreadsheet = gc.open_by_url(sheet)
     worksheet = spreadsheet.worksheet("Product List")
     
-    main(website, searchTerm, sheet, startRow=startRow, maxProducts=maxProducts)
+    main(website, searchTerm, worksheet, startRow=startRow, maxProducts=maxProducts)
     

@@ -9,6 +9,8 @@ from .string_manip import getOtherIngredients
 
 
 class ProductData:
+
+    __slots__ = ("_soup", "_details")
     
     def __init__(self, response: requests.Response, url: str, productType: str) -> None:
     
@@ -29,17 +31,19 @@ class ProductData:
             "formFactor": None,
             "firstAvailable": None,
             "uses": None,
-            "ingredients": None
+            "ingredients": None,
+            "origin": None
         }
+
 
     def to_list(self) -> list:
         
-        return self._details.values()
+        return list(self._details.values())
     
     @property
     def columns(self) -> typing.List[str]:
         
-        return self._details.keys()
+        return list(self._details.keys())
 
 
     def _getTitle_(self) -> None:
@@ -75,6 +79,10 @@ class ProductData:
     def _getIngredients_(self) -> None:
         raise NotImplementedError
 
+    def _getOrigin_(self) -> None:
+        raise NotImplementedError
+
+
     def __process__(self) -> None:
 
         self._details["title"] = self._getTitle_()
@@ -88,6 +96,10 @@ class ProductData:
         self._details["firstAvailable"] = self._getFirstAvailable_()
         self._details["uses"] = self._getUses_()
         self._details["ingredients"] = self._getIngredients_()
+        self._details['origin'] = self._getOrigin_()
+
+
+P = typing.TypeVar('P', bound=ProductData)
 
 
 class AmazonProductData(ProductData):
@@ -320,14 +332,34 @@ class AmazonProductData(ProductData):
 
             return ingredients
 
-        except:
-            return None
+        except AttributeError:
+            pass
+        
+        try:
+            ingredients = self._soup.find(id="nic-ingredients-content")
+            ingredients = ingredients.string.strip()
+            
+        except AttributeError:
+            pass
+        
+        return None
 
-        # try:
-        #     product_overview_div = self._soup.find(id="productOverview_feature_div")
-        #     benefits = 
-
-        # except
+    def _getOrigin_(self) -> str:
+        
+        try:
+            details = self._soup.find(id="detailBullets_feature_div")
+            
+            origin_str = re.compile(r"^Country of Origin")
+            origin_div = details.find("span", string=origin_str)
+            origin = origin_div.find_next_sibling().string
+            
+            origin = origin.strip()
+            
+            return origin
+            
+        except AttributeError:
+            return 'N/A'
+            
 
 
     def __process__(self) -> None:
