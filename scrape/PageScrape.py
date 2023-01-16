@@ -167,3 +167,8 @@ class AmazonPageScrape(PageScrape):
             return rank_str
         except:
             return None
+
+class IHerbPageScrape(PageScrape):
+    
+    def __init__(self, response: requests.Response, url: str, productType: str) -> None:
+        super().__init__(response, "Iherb", url, productType)
