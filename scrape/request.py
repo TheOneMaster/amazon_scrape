@@ -7,8 +7,12 @@ import tqdm
 from bs4 import BeautifulSoup
 from dotenv import dotenv_values
 import json
+import logging
 
 from .types import WEBSITE_DATA, Scrape, Proxy
+
+logging = logging.getLogger(__name__)
+
 
 temp_headers = dotenv_values(".env")
 HEADERS: Dict[str, str] = { key: value for key, value in temp_headers.items() if value is not None}
@@ -16,7 +20,9 @@ HEADERS: Dict[str, str] = { key: value for key, value in temp_headers.items() if
 # Helper functions
 def createSearchLink(base_url: str, search_term: str, page: int) -> str:
     if base_url == WEBSITE_DATA["Amazon"]['url']:
-        return f"{base_url}/s?k={search_term}&page={page}"
+        search_url = f"{base_url}/s?k={search_term}&page={page}"
+        logging.debug(f"SEARCH_URL: {search_url}")
+        return search_url
 
     elif base_url == WEBSITE_DATA["IHerb"]['url']:
         raise NotImplementedError
@@ -49,6 +55,9 @@ def getLinksFromSearch(soup: BeautifulSoup, base_url: str) -> List[str]:
                 ret_links.append(f"{base_url}{cleaned_href}")
 
     unique_links = pd.unique(ret_links)
+    
+    logging.debug(f"LINKS_FROM_SEARCH: {len(unique_links)}")
+    
     return unique_links.tolist()
 
 def loadLinksFromSearch(links: list[str], headers: dict, session) -> Dict[str, requests.Response]:
@@ -64,7 +73,25 @@ def loadLinksFromSearch(links: list[str], headers: dict, session) -> Dict[str, r
     return url_to_response
 
 def loadSessionUrl(url: str, session) -> requests.Response:
-    return session.get(url)
+    return session.get(url, timeout=10)
+
+def createProxy(options: Proxy) -> Dict[str, str]:
+    with open("proxies.json") as proxy_JSON:
+        JSON_data = json.load(proxy_JSON)
+        location_proxies = JSON_data[options["location"]]
+        available_proxies = location_proxies[options["type"]]
+        
+        chosen_proxy = available_proxies[0]
+
+        if options["type"] == "socks":
+            chosen_proxy = f"socks5://{chosen_proxy}"
+        
+        proxy_dict = {
+            "http": chosen_proxy,
+            "https": chosen_proxy
+        }
+        
+        return proxy_dict
 
 
 # Data Manipulation
@@ -86,7 +113,9 @@ def dfPriceManipulation(df: pd.DataFrame) -> pd.DataFrame:
 
 # Main functions to get data
 def getDataFromSearch(website: Literal["Amazon", "IHerb"], search_term: str, headers=None, page=1, maxProducts: Optional[int] = None,
-                      proxy: Optional[Proxy] = None) -> Dict[str, requests.Response]:
+                      proxy_options: Optional[Proxy] = None) -> Dict[str, requests.Response]:
+
+    logging.info("Getting search data")
 
     website_data = WEBSITE_DATA[website]
     base_url = website_data['url']
@@ -101,23 +130,9 @@ def getDataFromSearch(website: Literal["Amazon", "IHerb"], search_term: str, hea
     session.headers.update(search_headers)
     
     # Proxies
-    if proxy is None:
-        proxy = {
-            "location": "NY",
-            "type": "http"
-        }
-        
-    with open("proxies.json") as proxy_JSON:
-        proxy_dict = json.load(proxy_JSON)
-        location_proxy_data = proxy_dict[proxy['location']]
-        proxy_type_data = location_proxy_data[proxy['type']]
-        
-        proxy_data: List[str] = proxy_type_data
-
-    session.proxies.update({
-        "http": proxy_data[0],
-        "https": proxy_data[0]
-    })
+    if proxy_options is not None:
+        proxy = createProxy(proxy_options)
+        session.proxies.update(proxy)
         
     # Search for products
     search_page = session.get(search_url)
