@@ -103,16 +103,29 @@ class AmazonPageScrape(PageScrape):
     def _getPriceData_(self) -> Dict[str, str]:
         try:
             center_div = self.soup.find(id="centerCol")
-            price_div = center_div.select_one("[id*='corePrice']").find(string=re.compile("^Price")).parent.find_next()
-            price_parts = price_div.findChildren("span", recursive=False)
+            price_div = center_div.select_one("[id*='corePrice']")
             
-            main_price = price_parts[0].findChild("span").text.strip()
-            
-            price_per_unit = price_parts[1].text
-            price_per_unit = re.sub(r"[()\s]", "", price_per_unit)
-            price_per_unit, unit_type = price_per_unit.split("/")
-            
-            price_per_unit = price_per_unit[:len(price_per_unit)//2]
+            if price_div.find("table"):
+                price_div_el = price_div.find(string=re.compile("^Price")).parent.find_next()
+                price_parts = price_div_el.findChildren("span", recursive=False)
+                
+                main_price = price_parts[0].findChild("span").text.strip()
+                
+                price_per_unit = price_parts[1].text
+                price_per_unit = re.sub(r"[()\s]", "", price_per_unit)
+                price_per_unit, unit_type = price_per_unit.split("/")
+                price_per_unit = price_per_unit[:len(price_per_unit)//2]
+                
+            else:
+                price_parts = price_div.find_all(class_="a-offscreen")
+                main_price = price_parts[0].text.strip()
+                
+                price_per_unit = price_parts[1].text.strip()
+                unit_type_div = price_parts[1].parent.parent
+                unit_type_str = unit_type_div.text
+                unit_type = unit_type_str.split("/")[1]
+                unit_type = re.sub(r"[()\s]", "", unit_type)
+                
             
             ret_dict = {
                 "price": main_price,
