@@ -32,7 +32,11 @@ class AmazonPageScrape(PageScrape):
         "ASIN": "asin",
         "Best Sellers Rank": "rank",
         "Country of Origin": "origin",
-        "Manufacturer": "manufacturer"
+        "Manufacturer": "manufacturer",
+        "Ingredients": "ingredients",
+        
+        # Alternative titles
+        "Material Feature": "uses"
     }
     
     BASE_URL = "https://www.amazon.com"
@@ -98,10 +102,29 @@ class AmazonPageScrape(PageScrape):
             return {}
    
     def __parseProductInformation__(self) -> Dict[str, str]:
-        raise NotImplementedError
+        try:
+            info_div = self.soup.find(id="important-information")
+            sections = info_div.find_all("div", recursive=False)
+            
+            ret_dict = {}
+            for section in sections:
+                heading_str = section.find("h4").text.strip()
+                if (heading_str in self.COLUMN_MAP) and (getattr(self.productData, self.COLUMN_MAP[heading_str]) is None):
+                    column = self.COLUMN_MAP[heading_str]
+                    
+                    value_El = section.find("p", string=re.compile(r"[A-z]"))
+                    value = value_El.text.strip()
+                    
+                    ret_dict[column] = value
+            
+            return ret_dict
+            
+        except:
+            return {}
     
     def _getPriceData_(self) -> Dict[str, str]:
-        try:
+        ret_dict = {}
+        try:           
             center_div = self.soup.find(id="centerCol")
             price_div = center_div.select_one("[id*='corePrice']")
             
@@ -110,39 +133,41 @@ class AmazonPageScrape(PageScrape):
                 price_parts = price_div_el.findChildren("span", recursive=False)
                 
                 main_price = price_parts[0].findChild("span").text.strip()
+                ret_dict['price'] = main_price
                 
                 price_per_unit = price_parts[1].text
                 price_per_unit = re.sub(r"[()\s]", "", price_per_unit)
                 price_per_unit, unit_type = price_per_unit.split("/")
                 price_per_unit = price_per_unit[:len(price_per_unit)//2]
                 
+                ret_dict['unitPrice'] = price_per_unit
+                ret_dict['unitType'] = unit_type
+                
             else:
                 price_parts = price_div.find_all(class_="a-offscreen")
                 main_price = price_parts[0].text.strip()
+                ret_dict["price"] = main_price
                 
                 price_per_unit = price_parts[1].text.strip()
+                ret_dict["unitPrice"] = price_per_unit
+                
                 unit_type_div = price_parts[1].parent.parent
                 unit_type_str = unit_type_div.text
                 unit_type = unit_type_str.split("/")[1]
                 unit_type = re.sub(r"[()\s]", "", unit_type)
-                
-            
-            ret_dict = {
-                "price": main_price,
-                "unitPrice": price_per_unit,
-                "unitType": unit_type
-            }
+                ret_dict["unitType"] = unit_type
             
             return ret_dict
             
         except:
-            return {}
+            return ret_dict
     
     def _getProductData_(self) -> Dict[str, str]:
         product_overview = self.__parseProductOverview__()
         product_details = self.__parseProductDetails__()
+        product_information = self.__parseProductInformation__()
         
-        prod_data = product_overview | product_details
+        prod_data = product_overview | product_details | product_information
         
         if ('brand' not in prod_data) and ('manufacturer' in prod_data):
             prod_data['brand'] = prod_data.pop("manufacturer")
