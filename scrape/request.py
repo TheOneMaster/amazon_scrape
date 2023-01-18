@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Literal, Optional, Type, TypedDict
+from typing import Dict, List, Literal, Optional
 
 import pandas as pd
 import requests
@@ -7,11 +7,10 @@ import tqdm
 from bs4 import BeautifulSoup
 from dotenv import dotenv_values
 import json
-import logging
 
 from .types import WEBSITE_DATA, Scrape, Proxy
 
-logging = logging.getLogger(__name__)
+# logging = logging.getLogger(__name__)
 
 
 temp_headers = dotenv_values(".env")
@@ -20,8 +19,8 @@ HEADERS: Dict[str, str] = { key: value for key, value in temp_headers.items() if
 # Helper functions
 def createSearchLink(base_url: str, search_term: str, page: int) -> str:
     if base_url == WEBSITE_DATA["Amazon"]['url']:
-        search_url = f"{base_url}/s?k={search_term}&page={page}"
-        logging.debug(f"SEARCH_URL: {search_url}")
+        search_url = f"{base_url}/s?k={search_term}&page={page}&i=hpc&crid=31LYPP9IF70TO"
+        # logging.debug(f"SEARCH_URL: {search_url}")
         return search_url
 
     elif base_url == WEBSITE_DATA["IHerb"]['url']:
@@ -56,7 +55,7 @@ def getLinksFromSearch(soup: BeautifulSoup, base_url: str) -> List[str]:
 
     unique_links = pd.unique(ret_links)
     
-    logging.debug(f"LINKS_FROM_SEARCH: {len(unique_links)}")
+    # logging.debug(f"LINKS_FROM_SEARCH: {len(unique_links)}")
     
     return unique_links.tolist()
 
@@ -73,7 +72,7 @@ def loadLinksFromSearch(links: list[str], headers: dict, session) -> Dict[str, r
     return url_to_response
 
 def loadSessionUrl(url: str, session) -> requests.Response:
-    return session.get(url, timeout=10)
+    return session.get(url)
 
 def createProxy(options: Proxy) -> Dict[str, str]:
     with open("proxies.json") as proxy_JSON:
@@ -112,10 +111,10 @@ def dfPriceManipulation(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # Main functions to get data
-def getDataFromSearch(website: Literal["Amazon", "IHerb"], search_term: str, headers=None, page=1, maxProducts: Optional[int] = None,
+def getDataFromSearch(website: Literal["Amazon", "IHerb"], search_term: str, headers: Optional[Dict[str, str]]=None, page=1, maxProducts: Optional[int] = None,
                       proxy_options: Optional[Proxy] = None) -> Dict[str, requests.Response]:
 
-    logging.info("Getting search data")
+    # logging.info("Getting search data")
 
     website_data = WEBSITE_DATA[website]
     base_url = website_data['url']
